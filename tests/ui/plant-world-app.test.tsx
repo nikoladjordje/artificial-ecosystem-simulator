@@ -60,4 +60,25 @@ describe('PlantWorldApp', () => {
     expect(container.textContent).toContain('Herbivores: 8');
     expect(container.textContent).toContain('Predators: 2');
   });
+
+  it('shows run metadata, selects an organism, and exposes its traits and current action', () => {
+    expect(container.textContent).toContain('Run seed: 20261031');
+    expect(container.querySelector('[aria-label="Organism"]')).not.toBeNull();
+    const selector = container.querySelector('[aria-label="Organism"]') as HTMLSelectElement;
+    act(() => {
+      selector.value = 'herbivore-0';
+      selector.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(container.textContent).toContain('Selected herbivore #0');
+    expect(container.textContent).toContain('Current action:');
+    expect(container.textContent).toContain('Energy:');
+    expect(container.textContent).toContain('Vision range:');
+  });
+
+  it('provides labeled history and trait distribution views and explicit extinction status', () => {
+    expect(container.querySelector('[aria-label="Population and plant biomass history"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Herbivore trait distributions"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Predator trait distributions"]')).not.toBeNull();
+    expect(container.textContent).toContain('Run seed: 20261031');
+  });
 });
