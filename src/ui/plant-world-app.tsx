@@ -39,13 +39,14 @@ export function PlantWorldApp(): ReactElement {
   return <main>
     <header><h1>Deterministic plant world</h1><p>A simplified wrapping-grid ecosystem.</p></header>
     <PlantGridCanvas maximumPlantBiomass={scenario.maximumPlantBiomass} snapshot={snapshot} />
-    <p aria-live="polite">Tick {snapshot.tick}. Total biomass: {biomassTotal.toFixed(2)}.</p>
+    <p id="ecosystem-legend">Green shading shows plant biomass. Yellow squares show herbivores.</p>
+    <p aria-live="polite">Tick {snapshot.tick}. Total biomass: {biomassTotal.toFixed(2)}. Herbivores: {snapshot.herbivores.length}.</p>
     <div className="controls" aria-label="Simulation controls">
       <button onClick={() => setRunning((value) => !value)} type="button">{running ? 'Pause' : 'Run'}</button>
       <button onClick={reset} type="button">Reset</button>
       <label>Seed <input aria-label="Seed" onInput={(event) => setSeedInput(event.currentTarget.value)} type="number" value={seedInput} /></label>
     </div>
     {seedError && <p role="alert">{seedError}</p>}
-    <p>Plants regenerate by {scenario.plantRegenerationPerTick} biomass each tick, up to {scenario.maximumPlantBiomass} per cell. Grid edges wrap around.</p>
+    <p>Plants regenerate by {scenario.plantRegenerationPerTick} biomass each tick, up to {scenario.maximumPlantBiomass} per cell. Herbivores lose {scenario.herbivoreEnergyLossPerTick} energy each tick, seek nearby food, eat from their current cell, and die at zero energy. Grid edges wrap around.</p>
   </main>;
 }

@@ -51,4 +51,12 @@ describe('PlantWorldApp', () => {
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Seed must be a whole number.');
   });
+
+  it('describes herbivore and biomass markers accessibly', () => {
+    const canvas = container.querySelector('canvas');
+    expect(canvas?.getAttribute('aria-label')).toBe('Plant biomass grid with herbivores');
+    expect(canvas?.getAttribute('aria-describedby')).toBe('ecosystem-legend');
+    expect(container.querySelector('#ecosystem-legend')?.textContent).toBe('Green shading shows plant biomass. Yellow squares show herbivores.');
+    expect(container.textContent).toContain('Herbivores: 8');
+  });
 });

@@ -17,4 +17,14 @@ describe('validatePlantWorldScenario', () => {
       maximumPlantBiomass: 10,
     })).toThrow('initialPlantBiomass cannot exceed maximumPlantBiomass');
   });
+
+  it('rejects invalid herbivore counts and initial positions', () => {
+    expect(() => validatePlantWorldScenario({ ...defaultPlantWorldScenario, initialHerbivoreCount: -1 }))
+      .toThrow('initialHerbivoreCount must be a non-negative whole number');
+    expect(() => validatePlantWorldScenario({
+      ...defaultPlantWorldScenario,
+      initialHerbivoreCount: 1,
+      initialHerbivorePositions: [{ x: 24, y: 0 }],
+    })).toThrow('initialHerbivorePositions must be inside the grid');
+  });
 });
