@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Bootstrap a deterministic plant-world sandbox.
 
-**Status:** complete
+**Status:** completed
 
 - [x] Herbivore movement, seeded target tie-breaking, random search, local feeding, energy decay, and zero-energy death are observable through the simulation boundary.
 - [x] The canvas distinguishes herbivores from plant biomass and preserves a responsive runnable experience.
