@@ -27,4 +27,15 @@ describe('validatePlantWorldScenario', () => {
       initialHerbivorePositions: [{ x: 24, y: 0 }],
     })).toThrow('initialHerbivorePositions must be inside the grid');
   });
+
+  it('rejects invalid heredity bounds and population capacity', () => {
+    expect(() => validatePlantWorldScenario({
+      ...defaultPlantWorldScenario,
+      herbivoreEnergyEfficiencyRange: [0, 1],
+    })).toThrow('herbivoreEnergyEfficiencyRange minimum must be greater than zero');
+    expect(() => validatePlantWorldScenario({
+      ...defaultPlantWorldScenario,
+      maximumHerbivoreCount: 2_001,
+    })).toThrow('maximumHerbivoreCount and initialHerbivoreCount cannot exceed 2000');
+  });
 });

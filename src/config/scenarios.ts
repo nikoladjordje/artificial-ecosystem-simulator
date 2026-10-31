@@ -12,6 +12,19 @@ export interface PlantWorldScenario {
   herbivoreEnergyPerBiomass?: number;
   herbivoreVisionRangeCells?: number;
   initialHerbivorePositions?: readonly { x: number; y: number }[];
+  maximumHerbivoreCount?: number;
+  maximumHerbivoreAgeTicks?: number;
+  herbivoreReproductionEnergyThreshold?: number;
+  herbivoreReproductionCooldownTicks?: number;
+  herbivoreReproductionEnergyFraction?: number;
+  herbivoreMovementEnergyCost?: number;
+  herbivoreVisionEnergyCostPerCell?: number;
+  herbivoreMutationProbability?: number;
+  herbivoreMutationMagnitude?: number;
+  herbivoreSpeedRange?: readonly [number, number];
+  herbivoreVisionRange?: readonly [number, number];
+  herbivoreEnergyEfficiencyRange?: readonly [number, number];
+  herbivoreReproductionThresholdRange?: readonly [number, number];
 }
 
 export const defaultPlantWorldScenario: Readonly<PlantWorldScenario> = Object.freeze({
@@ -26,6 +39,19 @@ export const defaultPlantWorldScenario: Readonly<PlantWorldScenario> = Object.fr
   herbivoreFoodLimitPerTick: 1,
   herbivoreEnergyPerBiomass: 1,
   herbivoreVisionRangeCells: 4,
+  maximumHerbivoreCount: 2_000,
+  maximumHerbivoreAgeTicks: 120,
+  herbivoreReproductionEnergyThreshold: 12,
+  herbivoreReproductionCooldownTicks: 12,
+  herbivoreReproductionEnergyFraction: 0.5,
+  herbivoreMovementEnergyCost: 0.1,
+  herbivoreVisionEnergyCostPerCell: 0.025,
+  herbivoreMutationProbability: 0.2,
+  herbivoreMutationMagnitude: 0.2,
+  herbivoreSpeedRange: [1, 3] as const,
+  herbivoreVisionRange: [0, 8] as const,
+  herbivoreEnergyEfficiencyRange: [0.5, 1.5] as const,
+  herbivoreReproductionThresholdRange: [4, 24] as const,
 });
 
 const maximumGridCells = 10_000;
@@ -49,9 +75,51 @@ export function validatePlantWorldScenario(scenario: PlantWorldScenario): PlantW
   const foodLimit = scenario.herbivoreFoodLimitPerTick ?? 1;
   const energyPerBiomass = scenario.herbivoreEnergyPerBiomass ?? 1;
   const visionRange = scenario.herbivoreVisionRangeCells ?? 4;
+  const maximumHerbivores = scenario.maximumHerbivoreCount ?? 2_000;
+  const maximumAge = scenario.maximumHerbivoreAgeTicks ?? 120;
+  const reproductionThreshold = scenario.herbivoreReproductionEnergyThreshold ?? 12;
+  const reproductionCooldown = scenario.herbivoreReproductionCooldownTicks ?? 12;
+  const transferFraction = scenario.herbivoreReproductionEnergyFraction ?? 0.5;
+  const movementCost = scenario.herbivoreMovementEnergyCost ?? 0.1;
+  const visionCost = scenario.herbivoreVisionEnergyCostPerCell ?? 0.025;
+  const mutationProbability = scenario.herbivoreMutationProbability ?? 0.2;
+  const mutationMagnitude = scenario.herbivoreMutationMagnitude ?? 0.2;
   assertNonNegativeInteger(herbivoreCount, 'initialHerbivoreCount');
   if (herbivoreCount > maximumInitialHerbivores) {
     throw new Error(`initialHerbivoreCount cannot exceed ${maximumInitialHerbivores}`);
+  }
+  assertPositiveInteger(maximumHerbivores, 'maximumHerbivoreCount');
+  if (maximumHerbivores > maximumInitialHerbivores || herbivoreCount > maximumHerbivores) {
+    throw new Error(`maximumHerbivoreCount and initialHerbivoreCount cannot exceed ${maximumInitialHerbivores}`);
+  }
+  assertPositiveInteger(maximumAge, 'maximumHerbivoreAgeTicks');
+  assertPositiveFinite(reproductionThreshold, 'herbivoreReproductionEnergyThreshold');
+  assertNonNegativeInteger(reproductionCooldown, 'herbivoreReproductionCooldownTicks');
+  if (!Number.isFinite(transferFraction) || transferFraction <= 0 || transferFraction >= 1) {
+    throw new Error('herbivoreReproductionEnergyFraction must be between zero and one');
+  }
+  assertNonNegativeFinite(movementCost, 'herbivoreMovementEnergyCost');
+  assertNonNegativeFinite(visionCost, 'herbivoreVisionEnergyCostPerCell');
+  if (!Number.isFinite(mutationProbability) || mutationProbability < 0 || mutationProbability > 1) {
+    throw new Error('herbivoreMutationProbability must be between zero and one');
+  }
+  assertNonNegativeFinite(mutationMagnitude, 'herbivoreMutationMagnitude');
+  validateTraitRange(scenario.herbivoreSpeedRange ?? [1, 3], 'herbivoreSpeedRange', true);
+  validateTraitRange(scenario.herbivoreVisionRange ?? [0, 8], 'herbivoreVisionRange', true);
+  validateTraitRange(scenario.herbivoreEnergyEfficiencyRange ?? [0.5, 1.5], 'herbivoreEnergyEfficiencyRange', false);
+  validateTraitRange(scenario.herbivoreReproductionThresholdRange ?? [4, 24], 'herbivoreReproductionThresholdRange', false);
+  const speedRange = scenario.herbivoreSpeedRange ?? [1, 3];
+  const visionTraitRange = scenario.herbivoreVisionRange ?? [0, 8];
+  const efficiencyRange = scenario.herbivoreEnergyEfficiencyRange ?? [0.5, 1.5];
+  const thresholdRange = scenario.herbivoreReproductionThresholdRange ?? [4, 24];
+  if (speedRange[0] < 1) throw new Error('herbivoreSpeedRange minimum must be at least one');
+  if (efficiencyRange[0] <= 0) throw new Error('herbivoreEnergyEfficiencyRange minimum must be greater than zero');
+  if (thresholdRange[0] <= 0) throw new Error('herbivoreReproductionThresholdRange minimum must be greater than zero');
+  if (visionRange < visionTraitRange[0] || visionRange > visionTraitRange[1]) {
+    throw new Error('herbivoreVisionRangeCells must be inside herbivoreVisionRange');
+  }
+  if (reproductionThreshold < thresholdRange[0] || reproductionThreshold > thresholdRange[1]) {
+    throw new Error('herbivoreReproductionEnergyThreshold must be inside herbivoreReproductionThresholdRange');
   }
   assertPositiveFinite(initialEnergy, 'initialHerbivoreEnergy');
   assertNonNegativeFinite(energyLoss, 'herbivoreEnergyLossPerTick');
@@ -82,6 +150,14 @@ export function validatePlantWorldScenario(scenario: PlantWorldScenario): PlantW
     }
   }
   return { ...scenario };
+}
+
+function validateTraitRange(range: readonly [number, number], name: string, integer: boolean): void {
+  const [minimum, maximum] = range;
+  if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum > maximum || minimum < 0 ||
+      (integer && (!Number.isInteger(minimum) || !Number.isInteger(maximum)))) {
+    throw new Error(`${name} must contain valid non-negative ${integer ? 'whole-number' : 'numeric'} bounds`);
+  }
 }
 
 function assertPositiveInteger(value: number, name: string): void {

@@ -20,7 +20,10 @@ describe('PlantGridCanvas', () => {
       widthCells: 2,
       heightCells: 2,
       plantBiomass: [[1, 2], [3, 4]],
-      herbivores: [{ id: 0, x: 1, y: 0, energy: 5 }],
+      herbivores: [{
+        id: 0, x: 1, y: 0, energy: 5, ageTicks: 0, reproductionCooldownTicks: 0,
+        traits: { speed: 1, visionRangeCells: 0, energyEfficiency: 1, reproductionThreshold: 12 },
+      }],
       cellAt: () => 0,
     };
 

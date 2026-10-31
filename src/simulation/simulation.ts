@@ -15,6 +15,16 @@ export interface HerbivoreSnapshot {
   readonly x: number;
   readonly y: number;
   readonly energy: number;
+  readonly ageTicks: number;
+  readonly reproductionCooldownTicks: number;
+  readonly traits: HerbivoreTraits;
+}
+
+export interface HerbivoreTraits {
+  readonly speed: number;
+  readonly visionRangeCells: number;
+  readonly energyEfficiency: number;
+  readonly reproductionThreshold: number;
 }
 
 class Snapshot implements PlantWorldSnapshot {
@@ -39,6 +49,7 @@ export class Simulation {
   private plantBiomass: number[][];
   private herbivores: HerbivoreSnapshot[];
   private randomState: number;
+  private nextHerbivoreId = 0;
 
   constructor(scenario: PlantWorldScenario, seed: number) {
     this.scenario = validatePlantWorldScenario(scenario);
@@ -59,8 +70,20 @@ export class Simulation {
         x: position?.x ?? this.randomInt(this.scenario.gridWidthCells),
         y: position?.y ?? this.randomInt(this.scenario.gridHeightCells),
         energy: this.scenario.initialHerbivoreEnergy ?? 8,
+        ageTicks: 0,
+        reproductionCooldownTicks: 0,
+        traits: Object.freeze({
+          speed: this.scenario.herbivoreSpeedRange?.[0] ?? 1,
+          visionRangeCells: this.scenario.herbivoreVisionRangeCells ?? 4,
+          energyEfficiency: Math.max(
+            this.scenario.herbivoreEnergyEfficiencyRange?.[0] ?? 0.5,
+            Math.min(1, this.scenario.herbivoreEnergyEfficiencyRange?.[1] ?? 1.5),
+          ),
+          reproductionThreshold: this.scenario.herbivoreReproductionEnergyThreshold ?? 12,
+        }),
       });
     });
+    this.nextHerbivoreId = this.herbivores.length;
   }
 
   tick(ticks = 1): void {
@@ -92,11 +115,23 @@ export class Simulation {
   }
 
   private advanceHerbivores(): void {
-    const survivors = this.herbivores
-      .map((herbivore) => ({ ...herbivore, energy: herbivore.energy - (this.scenario.herbivoreEnergyLossPerTick ?? 0.5) }))
-      .filter((herbivore) => herbivore.energy > 0);
-    this.herbivores = survivors.map((herbivore) => {
-      const moved = this.moveHerbivore(herbivore);
+    const living = this.herbivores.map((herbivore) => ({
+      ...herbivore,
+      ageTicks: herbivore.ageTicks + 1,
+      reproductionCooldownTicks: Math.max(0, herbivore.reproductionCooldownTicks - 1),
+      energy: herbivore.energy - (this.scenario.herbivoreEnergyLossPerTick ?? 0.5) / herbivore.traits.energyEfficiency -
+        herbivore.traits.visionRangeCells * (this.scenario.herbivoreVisionEnergyCostPerCell ?? 0.025),
+    })).filter((herbivore) => herbivore.energy > 0 && herbivore.ageTicks < (this.scenario.maximumHerbivoreAgeTicks ?? 120));
+    const survivors = living.map((herbivore) => {
+      let moved = herbivore;
+      for (let step = 0; step < herbivore.traits.speed; step += 1) {
+        const next = this.moveHerbivore(moved);
+        const changedCell = next.x !== moved.x || next.y !== moved.y;
+        moved = changedCell
+          ? { ...next, energy: next.energy - (this.scenario.herbivoreMovementEnergyCost ?? 0.1) / herbivore.traits.energyEfficiency }
+          : next;
+      }
+      if (moved.energy <= 0) return Object.freeze(moved);
       const availableBiomass = this.plantBiomass[moved.y][moved.x];
       const consumed = Math.min(availableBiomass, this.scenario.herbivoreFoodLimitPerTick ?? 1);
       this.plantBiomass[moved.y][moved.x] -= consumed;
@@ -104,13 +139,56 @@ export class Simulation {
         ...moved,
         energy: moved.energy + consumed * (this.scenario.herbivoreEnergyPerBiomass ?? 1),
       });
-    });
+    }).filter((herbivore) => herbivore.energy > 0);
+    const offspring: HerbivoreSnapshot[] = [];
+    for (const parent of [...survivors]) {
+      if (parent.reproductionCooldownTicks > 0 || parent.energy < parent.traits.reproductionThreshold ||
+          survivors.length + offspring.length >= (this.scenario.maximumHerbivoreCount ?? 2_000)) continue;
+      const energyTransfer = parent.energy * (this.scenario.herbivoreReproductionEnergyFraction ?? 0.5);
+      const deltas = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+      const delta = deltas[this.randomInt(deltas.length)];
+      const child = Object.freeze({
+        id: this.nextHerbivoreId++,
+        x: wrap(parent.x + delta.x, this.scenario.gridWidthCells),
+        y: wrap(parent.y + delta.y, this.scenario.gridHeightCells),
+        energy: energyTransfer,
+        ageTicks: 0,
+        reproductionCooldownTicks: this.scenario.herbivoreReproductionCooldownTicks ?? 12,
+        traits: Object.freeze(this.mutateTraits(parent.traits)),
+      });
+      const parentIndex = survivors.findIndex((candidate) => candidate.id === parent.id);
+      survivors[parentIndex] = Object.freeze({
+        ...parent,
+        energy: parent.energy - energyTransfer,
+        reproductionCooldownTicks: this.scenario.herbivoreReproductionCooldownTicks ?? 12,
+      });
+      offspring.push(child);
+    }
+    this.herbivores = [...survivors, ...offspring];
+  }
+
+  private mutateTraits(traits: HerbivoreTraits): HerbivoreTraits {
+    const chance = this.scenario.herbivoreMutationProbability ?? 0.2;
+    const magnitude = this.scenario.herbivoreMutationMagnitude ?? 0.2;
+    const mutate = (value: number, range: readonly [number, number], integer: boolean): number => {
+      const next = this.randomInt(10_000) / 10_000 < chance
+        ? value + (this.randomInt(20_001) / 10_000 - 1) * magnitude * (range[1] - range[0])
+        : value;
+      const bounded = Math.max(range[0], Math.min(range[1], next));
+      return integer ? Math.round(bounded) : bounded;
+    };
+    return {
+      speed: mutate(traits.speed, this.scenario.herbivoreSpeedRange ?? [1, 3], true),
+      visionRangeCells: mutate(traits.visionRangeCells, this.scenario.herbivoreVisionRange ?? [0, 8], true),
+      energyEfficiency: mutate(traits.energyEfficiency, this.scenario.herbivoreEnergyEfficiencyRange ?? [0.5, 1.5], false),
+      reproductionThreshold: mutate(traits.reproductionThreshold, this.scenario.herbivoreReproductionThresholdRange ?? [4, 24], false),
+    };
   }
 
   private moveHerbivore(herbivore: HerbivoreSnapshot): HerbivoreSnapshot {
     if (this.plantBiomass[herbivore.y][herbivore.x] > 0) return herbivore;
     const targets: Array<{ x: number; y: number; biomass: number }> = [];
-    const vision = this.scenario.herbivoreVisionRangeCells ?? 4;
+    const vision = herbivore.traits.visionRangeCells;
     for (let y = 0; y < this.scenario.gridHeightCells; y += 1) {
       for (let x = 0; x < this.scenario.gridWidthCells; x += 1) {
         const biomass = this.plantBiomass[y][x];
