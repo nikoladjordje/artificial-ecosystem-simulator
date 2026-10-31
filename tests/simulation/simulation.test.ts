@@ -4,6 +4,197 @@ import { Simulation } from '../../src/simulation/simulation';
 import { defaultPlantWorldScenario } from '../../src/config/scenarios';
 
 describe('Simulation', () => {
+  it('moves predators toward herbivores, kills at most one co-located prey, and transfers prey energy', () => {
+    const simulation = new Simulation({
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 2,
+      gridHeightCells: 1,
+      initialPlantBiomass: 0,
+      initialPlantBiomassByCell: [[0, 1]],
+      plantRegenerationPerTick: 0,
+      initialHerbivoreCount: 2,
+      initialHerbivoreEnergy: 9,
+      initialHerbivorePositions: [{ x: 1, y: 0 }, { x: 1, y: 0 }],
+      herbivoreEnergyLossPerTick: 0,
+      herbivoreMovementEnergyCost: 0,
+      herbivoreVisionRangeCells: 0,
+      herbivoreReproductionEnergyThreshold: 100,
+      herbivoreReproductionThresholdRange: [4, 100],
+      initialPredatorCount: 1,
+      initialPredatorPositions: [{ x: 0, y: 0 }],
+      initialPredatorEnergy: 10,
+      predatorEnergyLossPerTick: 0,
+      predatorMovementEnergyCost: 0,
+      predatorVisionEnergyCostPerCell: 0,
+      predatorVisionRangeCells: 2,
+      predatorSpeedRange: [1, 1],
+      predatorEnergyPerPreyEnergy: 0.5,
+      predatorReproductionEnergyThreshold: 100,
+      predatorReproductionThresholdRange: [6, 100],
+    }, 23);
+
+    simulation.tick();
+
+    expect(simulation.snapshot().herbivores).toHaveLength(1);
+    expect(simulation.snapshot().predators[0]).toMatchObject({ x: 1, y: 0, energy: 15 });
+  });
+
+  it('breaks equal-energy visible prey ties with the seeded random stream', () => {
+    const simulation = new Simulation({
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 3,
+      gridHeightCells: 1,
+      initialPlantBiomass: 0,
+      initialPlantBiomassByCell: [[0, 1, 1]],
+      plantRegenerationPerTick: 0,
+      initialHerbivoreCount: 2,
+      initialHerbivorePositions: [{ x: 1, y: 0 }, { x: 2, y: 0 }],
+      initialHerbivoreEnergy: 6,
+      herbivoreEnergyLossPerTick: 0,
+      herbivoreMovementEnergyCost: 0,
+      herbivoreVisionRangeCells: 0,
+      initialPredatorCount: 1,
+      initialPredatorPositions: [{ x: 0, y: 0 }],
+      initialPredatorEnergy: 10,
+      predatorEnergyLossPerTick: 0,
+      predatorMovementEnergyCost: 0,
+      predatorVisionEnergyCostPerCell: 0,
+      predatorVisionRangeCells: 3,
+      predatorSpeedRange: [3, 3],
+      predatorEnergyPerPreyEnergy: 0.5,
+      predatorReproductionEnergyThreshold: 100,
+      predatorReproductionThresholdRange: [6, 100],
+    }, 31);
+
+    simulation.tick();
+
+    expect(simulation.snapshot().predators[0]).toMatchObject({ x: 2, y: 0, energy: 13.5 });
+    expect(simulation.snapshot().herbivores).toHaveLength(1);
+    expect(simulation.snapshot().herbivores[0]).toMatchObject({ x: 1, energy: 7 });
+  });
+
+  it('targets a higher-energy visible herbivore over a closer low-energy herbivore', () => {
+    const simulation = new Simulation({
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 7,
+      gridHeightCells: 1,
+      initialPlantBiomass: 0,
+      initialPlantBiomassByCell: [[0, 0, 0, 2, 0, 0, 0]],
+      plantRegenerationPerTick: 0,
+      initialHerbivoreCount: 2,
+      initialHerbivorePositions: [{ x: 3, y: 0 }, { x: 6, y: 0 }],
+      initialHerbivoreEnergy: 10,
+      herbivoreEnergyLossPerTick: 0,
+      herbivoreMovementEnergyCost: 0.1,
+      herbivoreVisionRangeCells: 3,
+      initialPredatorCount: 1,
+      initialPredatorPositions: [{ x: 0, y: 0 }],
+      initialPredatorEnergy: 10,
+      predatorEnergyLossPerTick: 0,
+      predatorMovementEnergyCost: 0,
+      predatorVisionEnergyCostPerCell: 0,
+      predatorVisionRangeCells: 3,
+      predatorSpeedRange: [3, 3],
+      predatorEnergyPerPreyEnergy: 0.5,
+      predatorReproductionEnergyThreshold: 100,
+      predatorReproductionThresholdRange: [6, 100],
+    }, 32);
+
+    simulation.tick();
+
+    expect(simulation.snapshot().predators[0]).toMatchObject({ x: 3, y: 0, energy: 15.4625 });
+    expect(simulation.snapshot().herbivores).toHaveLength(1);
+    expect(simulation.snapshot().herbivores[0]).toMatchObject({ x: 5, y: 0 });
+    expect(simulation.snapshot().herbivores[0].energy).toBeCloseTo(9.825);
+  });
+
+  it('continues regenerating plants after every animal has gone extinct', () => {
+    const simulation = new Simulation({
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 1,
+      gridHeightCells: 1,
+      initialPlantBiomass: 0,
+      maximumPlantBiomass: 2,
+      plantRegenerationPerTick: 1,
+      initialHerbivoreCount: 1,
+      initialHerbivoreEnergy: 1,
+      herbivoreEnergyLossPerTick: 1,
+      initialPredatorCount: 1,
+      initialPredatorEnergy: 1,
+      predatorEnergyLossPerTick: 1,
+    }, 24);
+
+    simulation.tick(3);
+
+    expect(simulation.snapshot()).toMatchObject({ tick: 3, herbivores: [], predators: [], plantBiomass: [[2]] });
+  });
+
+  it('lets herbivores feed before predators hunt in the same tick', () => {
+    const simulation = new Simulation({
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 1,
+      gridHeightCells: 1,
+      initialPlantBiomass: 1,
+      plantRegenerationPerTick: 0,
+      initialHerbivoreCount: 1,
+      initialHerbivoreEnergy: 3,
+      initialHerbivorePositions: [{ x: 0, y: 0 }],
+      herbivoreEnergyLossPerTick: 0,
+      herbivoreFoodLimitPerTick: 1,
+      herbivoreMovementEnergyCost: 0,
+      herbivoreVisionRangeCells: 0,
+      herbivoreReproductionEnergyThreshold: 100,
+      herbivoreReproductionThresholdRange: [4, 100],
+      initialPredatorCount: 1,
+      initialPredatorPositions: [{ x: 0, y: 0 }],
+      initialPredatorEnergy: 1,
+      predatorEnergyLossPerTick: 0,
+      predatorMovementEnergyCost: 0,
+      predatorVisionEnergyCostPerCell: 0,
+      predatorVisionRangeCells: 0,
+      predatorEnergyPerPreyEnergy: 1,
+      predatorReproductionEnergyThreshold: 100,
+      predatorReproductionThresholdRange: [6, 100],
+    }, 25);
+
+    simulation.tick();
+
+    expect(simulation.snapshot().herbivores).toEqual([]);
+    expect(simulation.snapshot().predators[0].energy).toBe(5);
+    expect(simulation.snapshot().plantBiomass[0][0]).toBe(0);
+  });
+
+  it('reproduces predators with bounded inherited traits using the seeded stream', () => {
+    const scenario = {
+      ...defaultPlantWorldScenario,
+      gridWidthCells: 2,
+      gridHeightCells: 2,
+      initialPlantBiomass: 0,
+      plantRegenerationPerTick: 0,
+      initialHerbivoreCount: 0,
+      initialPredatorCount: 1,
+      initialPredatorPositions: [{ x: 0, y: 0 }],
+      initialPredatorEnergy: 20,
+      predatorEnergyLossPerTick: 0,
+      predatorMovementEnergyCost: 0,
+      predatorVisionEnergyCostPerCell: 0,
+      predatorVisionRangeCells: 0,
+      predatorReproductionEnergyThreshold: 10,
+      predatorReproductionThresholdRange: [8, 12] as const,
+      predatorMutationProbability: 1,
+      predatorMutationMagnitude: 10,
+    };
+    const first = new Simulation(scenario, 29);
+    const replay = new Simulation(scenario, 29);
+
+    first.tick();
+    replay.tick();
+
+    expect(first.snapshot()).toEqual(replay.snapshot());
+    expect(first.snapshot().predators).toHaveLength(2);
+    expect(first.snapshot().predators[1].traits.reproductionThreshold).toBeGreaterThanOrEqual(8);
+    expect(first.snapshot().predators[1].traits.reproductionThreshold).toBeLessThanOrEqual(12);
+  });
   it('replays equal plant-world snapshots for the same seed and scenario', () => {
     const scenario = {
       ...defaultPlantWorldScenario,

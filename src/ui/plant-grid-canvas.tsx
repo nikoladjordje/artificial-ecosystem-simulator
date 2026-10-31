@@ -30,7 +30,14 @@ export function PlantGridCanvas({ snapshot, maximumPlantBiomass }: PlantGridCanv
         markerSize,
       );
     });
+    context.fillStyle = '#ef6b4a';
+    snapshot.predators.forEach((predator) => {
+      const markerSize = Math.max(5, Math.min(cellWidth, cellHeight) * 0.62);
+      context.beginPath();
+      context.arc(predator.x * cellWidth + cellWidth / 2, predator.y * cellHeight + cellHeight / 2, markerSize / 2, 0, Math.PI * 2);
+      context.fill();
+    });
   }, [maximumPlantBiomass, snapshot]);
 
-  return <canvas aria-describedby="ecosystem-legend" aria-label="Plant biomass grid with herbivores" height="480" ref={canvasRef} role="img" width="720" />;
+  return <canvas aria-describedby="ecosystem-legend" aria-label="Plant biomass grid with herbivores and predators" height="480" ref={canvasRef} role="img" width="720" />;
 }

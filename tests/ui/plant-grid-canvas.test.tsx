@@ -9,7 +9,7 @@ import type { PlantWorldSnapshot } from '../../src/simulation/simulation';
 describe('PlantGridCanvas', () => {
   it('draws a herbivore marker at its snapshot cell over the biomass grid', () => {
     const fillRect = vi.fn();
-    const context = { fillRect, fillStyle: '' };
+    const context = { fillRect, fillStyle: '', beginPath: vi.fn(), arc: vi.fn(), fill: vi.fn() };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(context as unknown as CanvasRenderingContext2D);
     const container = document.createElement('div');
@@ -24,12 +24,13 @@ describe('PlantGridCanvas', () => {
         id: 0, x: 1, y: 0, energy: 5, ageTicks: 0, reproductionCooldownTicks: 0,
         traits: { speed: 1, visionRangeCells: 0, energyEfficiency: 1, reproductionThreshold: 12 },
       }],
+      predators: [],
       cellAt: () => 0,
     };
 
     act(() => { root.render(<PlantGridCanvas maximumPlantBiomass={10} snapshot={snapshot} />); });
 
-    expect(context.fillStyle).toBe('#f4e34b');
+    expect(context.fillStyle).toBe('#ef6b4a');
     expect(fillRect).toHaveBeenLastCalledWith(489.6, 69.6, 100.8, 100.8);
 
     act(() => root.unmount());

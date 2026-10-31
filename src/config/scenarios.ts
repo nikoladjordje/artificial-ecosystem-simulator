@@ -25,7 +25,28 @@ export interface PlantWorldScenario {
   herbivoreVisionRange?: readonly [number, number];
   herbivoreEnergyEfficiencyRange?: readonly [number, number];
   herbivoreReproductionThresholdRange?: readonly [number, number];
+  initialPredatorCount?: number;
+  initialPredatorEnergy?: number;
+  predatorEnergyLossPerTick?: number;
+  predatorEnergyPerPreyEnergy?: number;
+  predatorVisionRangeCells?: number;
+  initialPredatorPositions?: readonly { x: number; y: number }[];
+  maximumPredatorCount?: number;
+  maximumPredatorAgeTicks?: number;
+  predatorReproductionEnergyThreshold?: number;
+  predatorReproductionCooldownTicks?: number;
+  predatorReproductionEnergyFraction?: number;
+  predatorMovementEnergyCost?: number;
+  predatorVisionEnergyCostPerCell?: number;
+  predatorMutationProbability?: number;
+  predatorMutationMagnitude?: number;
+  predatorSpeedRange?: readonly [number, number];
+  predatorVisionRange?: readonly [number, number];
+  predatorEnergyEfficiencyRange?: readonly [number, number];
+  predatorReproductionThresholdRange?: readonly [number, number];
 }
+
+export const maximumPredatorPopulation = 500;
 
 export const defaultPlantWorldScenario: Readonly<PlantWorldScenario> = Object.freeze({
   gridWidthCells: 24,
@@ -52,6 +73,24 @@ export const defaultPlantWorldScenario: Readonly<PlantWorldScenario> = Object.fr
   herbivoreVisionRange: [0, 8] as const,
   herbivoreEnergyEfficiencyRange: [0.5, 1.5] as const,
   herbivoreReproductionThresholdRange: [4, 24] as const,
+  initialPredatorCount: 0,
+  initialPredatorEnergy: 10,
+  predatorEnergyLossPerTick: 0.6,
+  predatorEnergyPerPreyEnergy: 0.5,
+  predatorVisionRangeCells: 5,
+  maximumPredatorCount: maximumPredatorPopulation,
+  maximumPredatorAgeTicks: 140,
+  predatorReproductionEnergyThreshold: 16,
+  predatorReproductionCooldownTicks: 16,
+  predatorReproductionEnergyFraction: 0.5,
+  predatorMovementEnergyCost: 0.12,
+  predatorVisionEnergyCostPerCell: 0.03,
+  predatorMutationProbability: 0.2,
+  predatorMutationMagnitude: 0.2,
+  predatorSpeedRange: [1, 3] as const,
+  predatorVisionRange: [0, 8] as const,
+  predatorEnergyEfficiencyRange: [0.5, 1.5] as const,
+  predatorReproductionThresholdRange: [6, 32] as const,
 });
 
 const maximumGridCells = 10_000;
@@ -84,6 +123,41 @@ export function validatePlantWorldScenario(scenario: PlantWorldScenario): PlantW
   const visionCost = scenario.herbivoreVisionEnergyCostPerCell ?? 0.025;
   const mutationProbability = scenario.herbivoreMutationProbability ?? 0.2;
   const mutationMagnitude = scenario.herbivoreMutationMagnitude ?? 0.2;
+  const predatorCount = scenario.initialPredatorCount ?? 0;
+  const maximumPredators = scenario.maximumPredatorCount ?? maximumPredatorPopulation;
+  assertNonNegativeInteger(predatorCount, 'initialPredatorCount');
+  if (predatorCount > maximumPredatorPopulation || !Number.isInteger(maximumPredators) || maximumPredators < 1 || maximumPredators > maximumPredatorPopulation || predatorCount > maximumPredators) {
+    throw new Error(`maximumPredatorCount and initialPredatorCount cannot exceed ${maximumPredatorPopulation}`);
+  }
+  assertPositiveFinite(scenario.initialPredatorEnergy ?? 10, 'initialPredatorEnergy');
+  assertNonNegativeFinite(scenario.predatorEnergyLossPerTick ?? 0.6, 'predatorEnergyLossPerTick');
+  assertPositiveFinite(scenario.predatorEnergyPerPreyEnergy ?? 0.5, 'predatorEnergyPerPreyEnergy');
+  assertPositiveInteger(scenario.maximumPredatorAgeTicks ?? 140, 'maximumPredatorAgeTicks');
+  assertPositiveFinite(scenario.predatorReproductionEnergyThreshold ?? 16, 'predatorReproductionEnergyThreshold');
+  assertNonNegativeInteger(scenario.predatorReproductionCooldownTicks ?? 16, 'predatorReproductionCooldownTicks');
+  const predatorFraction = scenario.predatorReproductionEnergyFraction ?? 0.5;
+  if (!Number.isFinite(predatorFraction) || predatorFraction <= 0 || predatorFraction >= 1) throw new Error('predatorReproductionEnergyFraction must be between zero and one');
+  assertNonNegativeFinite(scenario.predatorMovementEnergyCost ?? 0.12, 'predatorMovementEnergyCost');
+  assertNonNegativeFinite(scenario.predatorVisionEnergyCostPerCell ?? 0.03, 'predatorVisionEnergyCostPerCell');
+  const predatorChance = scenario.predatorMutationProbability ?? 0.2;
+  if (!Number.isFinite(predatorChance) || predatorChance < 0 || predatorChance > 1) throw new Error('predatorMutationProbability must be between zero and one');
+  assertNonNegativeFinite(scenario.predatorMutationMagnitude ?? 0.2, 'predatorMutationMagnitude');
+  validateTraitRange(scenario.predatorSpeedRange ?? [1, 3], 'predatorSpeedRange', true);
+  validateTraitRange(scenario.predatorVisionRange ?? [0, 8], 'predatorVisionRange', true);
+  validateTraitRange(scenario.predatorEnergyEfficiencyRange ?? [0.5, 1.5], 'predatorEnergyEfficiencyRange', false);
+  validateTraitRange(scenario.predatorReproductionThresholdRange ?? [6, 32], 'predatorReproductionThresholdRange', false);
+  if ((scenario.predatorSpeedRange ?? [1, 3])[0] < 1 || (scenario.predatorEnergyEfficiencyRange ?? [0.5, 1.5])[0] <= 0 ||
+      (scenario.predatorReproductionThresholdRange ?? [6, 32])[0] <= 0) throw new Error('predator trait range minimums are invalid');
+  const predatorVision = scenario.predatorVisionRangeCells ?? 5;
+  assertNonNegativeInteger(predatorVision, 'predatorVisionRangeCells');
+  if (predatorVision < (scenario.predatorVisionRange ?? [0, 8])[0] || predatorVision > (scenario.predatorVisionRange ?? [0, 8])[1]) throw new Error('predatorVisionRangeCells must be inside predatorVisionRange');
+  if (scenario.initialPredatorPositions && scenario.initialPredatorPositions.length !== predatorCount) throw new Error('initialPredatorPositions must match initialPredatorCount');
+  for (const position of scenario.initialPredatorPositions ?? []) {
+    if (!Number.isInteger(position.x) || position.x < 0 || position.x >= scenario.gridWidthCells || !Number.isInteger(position.y) || position.y < 0 || position.y >= scenario.gridHeightCells) throw new Error('initialPredatorPositions must be inside the grid');
+  }
+  const predatorThreshold = scenario.predatorReproductionEnergyThreshold ?? 16;
+  const predatorThresholdRange = scenario.predatorReproductionThresholdRange ?? [6, 32];
+  if (predatorThreshold < predatorThresholdRange[0] || predatorThreshold > predatorThresholdRange[1]) throw new Error('predatorReproductionEnergyThreshold must be inside predatorReproductionThresholdRange');
   assertNonNegativeInteger(herbivoreCount, 'initialHerbivoreCount');
   if (herbivoreCount > maximumInitialHerbivores) {
     throw new Error(`initialHerbivoreCount cannot exceed ${maximumInitialHerbivores}`);

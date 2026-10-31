@@ -1,4 +1,7 @@
-import { type PlantWorldScenario, validatePlantWorldScenario } from '../config/scenarios';
+import { maximumPredatorPopulation, type PlantWorldScenario, validatePlantWorldScenario } from '../config/scenarios';
+import { mutateTraits, type HerbivoreTraits, type PredatorTraits } from '../genetics/traits';
+
+export type { HerbivoreTraits, PredatorTraits } from '../genetics/traits';
 
 export interface PlantWorldSnapshot {
   readonly tick: number;
@@ -7,6 +10,7 @@ export interface PlantWorldSnapshot {
   readonly heightCells: number;
   readonly plantBiomass: readonly (readonly number[])[];
   readonly herbivores: readonly HerbivoreSnapshot[];
+  readonly predators: readonly PredatorSnapshot[];
   cellAt(x: number, y: number): number;
 }
 
@@ -20,11 +24,8 @@ export interface HerbivoreSnapshot {
   readonly traits: HerbivoreTraits;
 }
 
-export interface HerbivoreTraits {
-  readonly speed: number;
-  readonly visionRangeCells: number;
-  readonly energyEfficiency: number;
-  readonly reproductionThreshold: number;
+export interface PredatorSnapshot extends Omit<HerbivoreSnapshot, 'traits'> {
+  readonly traits: PredatorTraits;
 }
 
 class Snapshot implements PlantWorldSnapshot {
@@ -35,6 +36,7 @@ class Snapshot implements PlantWorldSnapshot {
     public readonly heightCells: number,
     public readonly plantBiomass: readonly (readonly number[])[],
     public readonly herbivores: readonly HerbivoreSnapshot[],
+    public readonly predators: readonly PredatorSnapshot[],
   ) {}
 
   cellAt(x: number, y: number): number {
@@ -48,8 +50,10 @@ export class Simulation {
   private tickCount = 0;
   private plantBiomass: number[][];
   private herbivores: HerbivoreSnapshot[];
+  private predators: PredatorSnapshot[];
   private randomState: number;
   private nextHerbivoreId = 0;
+  private nextPredatorId = 0;
 
   constructor(scenario: PlantWorldScenario, seed: number) {
     this.scenario = validatePlantWorldScenario(scenario);
@@ -84,6 +88,24 @@ export class Simulation {
       });
     });
     this.nextHerbivoreId = this.herbivores.length;
+    this.predators = Array.from({ length: this.scenario.initialPredatorCount ?? 0 }, (_, id) => {
+      const position = this.scenario.initialPredatorPositions?.[id];
+      return Object.freeze({
+        id,
+        x: position?.x ?? this.randomInt(this.scenario.gridWidthCells),
+        y: position?.y ?? this.randomInt(this.scenario.gridHeightCells),
+        energy: this.scenario.initialPredatorEnergy ?? 10,
+        ageTicks: 0,
+        reproductionCooldownTicks: 0,
+        traits: Object.freeze({
+          speed: this.scenario.predatorSpeedRange?.[0] ?? 1,
+          visionRangeCells: this.scenario.predatorVisionRangeCells ?? 5,
+          energyEfficiency: Math.max(this.scenario.predatorEnergyEfficiencyRange?.[0] ?? 0.5, Math.min(1, this.scenario.predatorEnergyEfficiencyRange?.[1] ?? 1.5)),
+          reproductionThreshold: this.scenario.predatorReproductionEnergyThreshold ?? 16,
+        }),
+      });
+    });
+    this.nextPredatorId = this.predators.length;
   }
 
   tick(ticks = 1): void {
@@ -92,7 +114,16 @@ export class Simulation {
     }
     for (let index = 0; index < ticks; index += 1) {
       this.regeneratePlants();
-      this.advanceHerbivores();
+      this.ageHerbivores();
+      this.agePredators();
+      this.moveHerbivores();
+      this.advancePredators();
+      this.feedHerbivores();
+      this.huntHerbivores();
+      this.reproduceHerbivores();
+      this.reproducePredators();
+      this.herbivores = this.herbivores.filter((herbivore) => herbivore.energy > 0);
+      this.predators = this.predators.filter((predator) => predator.energy > 0);
       this.tickCount += 1;
     }
   }
@@ -101,9 +132,97 @@ export class Simulation {
     const biomass = this.plantBiomass.map((row) => Object.freeze([...row]));
     const frozenBiomass = Object.freeze(biomass);
     const herbivores = Object.freeze(this.herbivores.map((herbivore) => Object.freeze({ ...herbivore })));
+    const predators = Object.freeze(this.predators.map((predator) => Object.freeze({ ...predator })));
     const width = this.scenario.gridWidthCells;
     const height = this.scenario.gridHeightCells;
-    return Object.freeze(new Snapshot(this.tickCount, this.seed, width, height, frozenBiomass, herbivores));
+    return Object.freeze(new Snapshot(this.tickCount, this.seed, width, height, frozenBiomass, herbivores, predators));
+  }
+
+  private agePredators(): void {
+    this.predators = this.predators.map((predator) => ({
+      ...predator,
+      ageTicks: predator.ageTicks + 1,
+      reproductionCooldownTicks: Math.max(0, predator.reproductionCooldownTicks - 1),
+      energy: predator.energy - (this.scenario.predatorEnergyLossPerTick ?? 0.6) / predator.traits.energyEfficiency -
+        predator.traits.visionRangeCells * (this.scenario.predatorVisionEnergyCostPerCell ?? 0.03),
+    })).filter((predator) => predator.energy > 0 && predator.ageTicks < (this.scenario.maximumPredatorAgeTicks ?? 140));
+  }
+
+  private advancePredators(): void {
+    const survivors = this.predators.map((predator) => {
+      let moved = predator;
+      for (let step = 0; step < predator.traits.speed; step += 1) {
+        const next = this.movePredator(moved);
+        if (next.x !== moved.x || next.y !== moved.y) moved = { ...next, energy: next.energy - (this.scenario.predatorMovementEnergyCost ?? 0.12) / predator.traits.energyEfficiency };
+        else moved = next;
+      }
+      return moved;
+    }).filter((predator) => predator.energy > 0);
+    this.predators = survivors;
+  }
+
+  private huntHerbivores(): void {
+    const preyToRemove = new Set<number>();
+    const survivors = this.predators;
+    const fedPredators = survivors.map((predator) => {
+      const coLocatedPrey = this.herbivores.filter((herbivore) => !preyToRemove.has(herbivore.id) && herbivore.x === predator.x && herbivore.y === predator.y);
+      if (coLocatedPrey.length === 0) return predator;
+      const greatestPreyEnergy = Math.max(...coLocatedPrey.map((herbivore) => herbivore.energy));
+      const candidates = coLocatedPrey.filter((herbivore) => herbivore.energy === greatestPreyEnergy);
+      const prey = candidates[this.randomInt(candidates.length)];
+      preyToRemove.add(prey.id);
+      return { ...predator, energy: predator.energy + prey.energy * (this.scenario.predatorEnergyPerPreyEnergy ?? 0.5) };
+    });
+    this.herbivores = this.herbivores.filter((herbivore) => !preyToRemove.has(herbivore.id));
+    this.predators = fedPredators;
+  }
+
+  private reproducePredators(): void {
+    const offspring: PredatorSnapshot[] = [];
+    const fedPredators = this.predators;
+    for (const parent of [...fedPredators]) {
+      if (parent.reproductionCooldownTicks > 0 || parent.energy < parent.traits.reproductionThreshold || fedPredators.length + offspring.length >= (this.scenario.maximumPredatorCount ?? maximumPredatorPopulation)) continue;
+      const energyTransfer = parent.energy * (this.scenario.predatorReproductionEnergyFraction ?? 0.5);
+      const deltas = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+      const delta = deltas[this.randomInt(deltas.length)];
+      const child = Object.freeze({
+        id: this.nextPredatorId++, x: wrap(parent.x + delta.x, this.scenario.gridWidthCells), y: wrap(parent.y + delta.y, this.scenario.gridHeightCells),
+        energy: energyTransfer, ageTicks: 0, reproductionCooldownTicks: this.scenario.predatorReproductionCooldownTicks ?? 16,
+        traits: Object.freeze(mutateTraits(parent.traits, {
+          probability: this.scenario.predatorMutationProbability ?? 0.2,
+          magnitude: this.scenario.predatorMutationMagnitude ?? 0.2,
+          ranges: {
+            speed: this.scenario.predatorSpeedRange ?? [1, 3],
+            vision: this.scenario.predatorVisionRange ?? [0, 8],
+            energyEfficiency: this.scenario.predatorEnergyEfficiencyRange ?? [0.5, 1.5],
+            reproductionThreshold: this.scenario.predatorReproductionThresholdRange ?? [6, 32],
+          },
+        }, (maximum) => this.randomInt(maximum))),
+      });
+      const parentIndex = fedPredators.findIndex((candidate) => candidate.id === parent.id);
+      fedPredators[parentIndex] = { ...parent, energy: parent.energy - energyTransfer, reproductionCooldownTicks: this.scenario.predatorReproductionCooldownTicks ?? 16 };
+      offspring.push(child);
+    }
+    this.predators = [...fedPredators.filter((predator) => predator.energy > 0), ...offspring];
+  }
+
+  private movePredator(predator: PredatorSnapshot): PredatorSnapshot {
+    const visiblePrey = this.herbivores.filter((herbivore) => wrappedDistance(herbivore.x, predator.x, this.scenario.gridWidthCells) + wrappedDistance(herbivore.y, predator.y, this.scenario.gridHeightCells) <= predator.traits.visionRangeCells);
+    if (visiblePrey.length === 0) {
+      const deltas = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+      return this.wrapPosition(predator, deltas[this.randomInt(deltas.length)]);
+    }
+    const coLocatedPrey = visiblePrey.filter((herbivore) => herbivore.x === predator.x && herbivore.y === predator.y);
+    if (coLocatedPrey.length > 0) return predator;
+    const greatestPreyEnergy = Math.max(...visiblePrey.map((herbivore) => herbivore.energy));
+    const candidates = visiblePrey.filter((herbivore) => herbivore.energy === greatestPreyEnergy);
+    const prey = candidates[this.randomInt(candidates.length)];
+    const dx = shortestWrappedDelta(predator.x, prey.x, this.scenario.gridWidthCells);
+    const dy = shortestWrappedDelta(predator.y, prey.y, this.scenario.gridHeightCells);
+    const horizontal = dx === 0 ? 0 : Math.sign(dx);
+    const vertical = dy === 0 ? 0 : Math.sign(dy);
+    if (horizontal !== 0 && vertical !== 0) return this.wrapPosition(predator, this.randomInt(2) === 0 ? { x: horizontal, y: 0 } : { x: 0, y: vertical });
+    return this.wrapPosition(predator, { x: horizontal, y: vertical });
   }
 
   private regeneratePlants(): void {
@@ -114,15 +233,18 @@ export class Simulation {
     }
   }
 
-  private advanceHerbivores(): void {
-    const living = this.herbivores.map((herbivore) => ({
+  private ageHerbivores(): void {
+    this.herbivores = this.herbivores.map((herbivore) => ({
       ...herbivore,
       ageTicks: herbivore.ageTicks + 1,
       reproductionCooldownTicks: Math.max(0, herbivore.reproductionCooldownTicks - 1),
       energy: herbivore.energy - (this.scenario.herbivoreEnergyLossPerTick ?? 0.5) / herbivore.traits.energyEfficiency -
         herbivore.traits.visionRangeCells * (this.scenario.herbivoreVisionEnergyCostPerCell ?? 0.025),
     })).filter((herbivore) => herbivore.energy > 0 && herbivore.ageTicks < (this.scenario.maximumHerbivoreAgeTicks ?? 120));
-    const survivors = living.map((herbivore) => {
+  }
+
+  private moveHerbivores(): void {
+    const survivors = this.herbivores.map((herbivore) => {
       let moved = herbivore;
       for (let step = 0; step < herbivore.traits.speed; step += 1) {
         const next = this.moveHerbivore(moved);
@@ -131,15 +253,22 @@ export class Simulation {
           ? { ...next, energy: next.energy - (this.scenario.herbivoreMovementEnergyCost ?? 0.1) / herbivore.traits.energyEfficiency }
           : next;
       }
-      if (moved.energy <= 0) return Object.freeze(moved);
-      const availableBiomass = this.plantBiomass[moved.y][moved.x];
-      const consumed = Math.min(availableBiomass, this.scenario.herbivoreFoodLimitPerTick ?? 1);
-      this.plantBiomass[moved.y][moved.x] -= consumed;
-      return Object.freeze({
-        ...moved,
-        energy: moved.energy + consumed * (this.scenario.herbivoreEnergyPerBiomass ?? 1),
-      });
+      return moved;
     }).filter((herbivore) => herbivore.energy > 0);
+    this.herbivores = survivors;
+  }
+
+  private feedHerbivores(): void {
+    this.herbivores = this.herbivores.map((herbivore) => {
+      const availableBiomass = this.plantBiomass[herbivore.y][herbivore.x];
+      const consumed = Math.min(availableBiomass, this.scenario.herbivoreFoodLimitPerTick ?? 1);
+      this.plantBiomass[herbivore.y][herbivore.x] -= consumed;
+      return { ...herbivore, energy: herbivore.energy + consumed * (this.scenario.herbivoreEnergyPerBiomass ?? 1) };
+    });
+  }
+
+  private reproduceHerbivores(): void {
+    const survivors = this.herbivores;
     const offspring: HerbivoreSnapshot[] = [];
     for (const parent of [...survivors]) {
       if (parent.reproductionCooldownTicks > 0 || parent.energy < parent.traits.reproductionThreshold ||
@@ -154,7 +283,16 @@ export class Simulation {
         energy: energyTransfer,
         ageTicks: 0,
         reproductionCooldownTicks: this.scenario.herbivoreReproductionCooldownTicks ?? 12,
-        traits: Object.freeze(this.mutateTraits(parent.traits)),
+        traits: Object.freeze(mutateTraits(parent.traits, {
+          probability: this.scenario.herbivoreMutationProbability ?? 0.2,
+          magnitude: this.scenario.herbivoreMutationMagnitude ?? 0.2,
+          ranges: {
+            speed: this.scenario.herbivoreSpeedRange ?? [1, 3],
+            vision: this.scenario.herbivoreVisionRange ?? [0, 8],
+            energyEfficiency: this.scenario.herbivoreEnergyEfficiencyRange ?? [0.5, 1.5],
+            reproductionThreshold: this.scenario.herbivoreReproductionThresholdRange ?? [4, 24],
+          },
+        }, (maximum) => this.randomInt(maximum))),
       });
       const parentIndex = survivors.findIndex((candidate) => candidate.id === parent.id);
       survivors[parentIndex] = Object.freeze({
@@ -165,24 +303,6 @@ export class Simulation {
       offspring.push(child);
     }
     this.herbivores = [...survivors, ...offspring];
-  }
-
-  private mutateTraits(traits: HerbivoreTraits): HerbivoreTraits {
-    const chance = this.scenario.herbivoreMutationProbability ?? 0.2;
-    const magnitude = this.scenario.herbivoreMutationMagnitude ?? 0.2;
-    const mutate = (value: number, range: readonly [number, number], integer: boolean): number => {
-      const next = this.randomInt(10_000) / 10_000 < chance
-        ? value + (this.randomInt(20_001) / 10_000 - 1) * magnitude * (range[1] - range[0])
-        : value;
-      const bounded = Math.max(range[0], Math.min(range[1], next));
-      return integer ? Math.round(bounded) : bounded;
-    };
-    return {
-      speed: mutate(traits.speed, this.scenario.herbivoreSpeedRange ?? [1, 3], true),
-      visionRangeCells: mutate(traits.visionRangeCells, this.scenario.herbivoreVisionRange ?? [0, 8], true),
-      energyEfficiency: mutate(traits.energyEfficiency, this.scenario.herbivoreEnergyEfficiencyRange ?? [0.5, 1.5], false),
-      reproductionThreshold: mutate(traits.reproductionThreshold, this.scenario.herbivoreReproductionThresholdRange ?? [4, 24], false),
-    };
   }
 
   private moveHerbivore(herbivore: HerbivoreSnapshot): HerbivoreSnapshot {
